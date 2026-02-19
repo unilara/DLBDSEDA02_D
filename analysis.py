@@ -1,4 +1,5 @@
 import re
+import numpy as np
 import pandas as pd
 
 import spacy
@@ -10,6 +11,10 @@ from sklearn.decomposition import LatentDirichletAllocation, NMF
 import gensim
 from gensim.models import CoherenceModel
 from gensim.corpora import Dictionary
+
+# Globale Einstellungen für Reproduzierbarkeit
+SEED = 42
+np.random.seed(SEED)
 
 # Hilfsfunktionen
 def normalize_text(text: str) -> str:
@@ -24,7 +29,7 @@ def spacy_clean_texts(nlp, texts):
     Textvorverarbeitung mit spaCy:
     - Tokenisierung
     - Stopwörter entfernen
-    - nur alphabetische Tokens behalten
+    - nur alphabetische Tokens behalten (keine Zahlen/Sonderzeichen)
     - Lemmatisierung
     - kurze Tokens entfernen (<=2 Zeichen)
     Ergebnis: Liste aus 'sauberen Texten' (Strings), geeignet für Vectorizer.
@@ -39,7 +44,7 @@ def spacy_clean_texts(nlp, texts):
             if token.is_stop:
                 continue
 
-            # Nur Buchstaben (keine Zahlen/Sonderzeichen)
+            # Nur Buchstaben
             if not token.is_alpha:
                 continue
 
@@ -49,7 +54,7 @@ def spacy_clean_texts(nlp, texts):
             if len(lemma) <= 2:
                 continue
 
-            # Zusätzlicher Stopword-Check (Sicherheit)
+            # Zusätzlicher Stopword-Check
             if lemma in STOP_WORDS:
                 continue
 
@@ -77,11 +82,12 @@ def compute_coherence_values(dictionary, corpus, texts, start=2, limit=10, passe
     coherence_values = []
 
     for num_topics in range(start, limit):
+        # gensim LDA für Coherence-Bewertung
         model = gensim.models.LdaModel(
             corpus=corpus,
             id2word=dictionary,
             num_topics=num_topics,
-            random_state=42,
+            random_state=SEED,
             passes=passes
         )
 
@@ -118,10 +124,10 @@ def main():
             "Bitte im aktivierten venv ausführen:\n"
             "  python -m spacy download en_core_web_sm\n"
         )
-    
-    # 3) Subset für Hauptanalyse
+
+    # 3) Fixes Subset für Hauptanalyse (Reproduzierbarkeit)
     sample_main = 500
-    texts_main = texts_all.sample(n=sample_main, random_state=42)
+    texts_main = texts_all.sample(n=sample_main, random_state=SEED)
     print("Sample Größe (Hauptanalyse):", len(texts_main))
 
     # Normalisieren + spaCy-cleaning
@@ -131,8 +137,8 @@ def main():
     print("\nBeispiel nachher (cleaned):")
     print(cleaned_main[0][:250])
 
-    # 4) Vektorisierung 
-    # Bag-of-Word
+    # 4) Vektorisierung (2 Techniken)
+    # Bag-of-Words / Count
     count_vectorizer = CountVectorizer(max_df=0.95, min_df=2)
     count_matrix = count_vectorizer.fit_transform(cleaned_main)
 
@@ -144,13 +150,14 @@ def main():
     print("Count-Matrix Shape:", count_matrix.shape)
     print("TFIDF-Matrix Shape:", tfidf_matrix.shape)
 
-    # 5) Topic Modeling (2 Methoden) – erstes Beispiel (k=5)
+    # 5) Topic Modeling (2 Methoden)
     n_topics_initial = 5
 
-    lda = LatentDirichletAllocation(n_components=n_topics_initial, random_state=42)
+    lda = LatentDirichletAllocation(n_components=n_topics_initial, random_state=SEED)
     lda.fit(count_matrix)
 
-    nmf = NMF(n_components=n_topics_initial, random_state=42)
+    # init="nndsvd" verbessert Stabilität/Interpretierbarkeit (reproduzierbar)
+    nmf = NMF(n_components=n_topics_initial, random_state=SEED, init="nndsvd")
     nmf.fit(tfidf_matrix)
 
     print(f"\n--- LDA Topics (k={n_topics_initial}) ---")
@@ -159,10 +166,9 @@ def main():
     print(f"\n--- NMF Topics (k={n_topics_initial}) ---")
     print_top_words(nmf, tfidf_vectorizer.get_feature_names_out())
 
-    # 6) Coherence Score auf kleinerem Subset
-    # Noch kleineres Sample für Coherence, weil es rechenintensiv ist
+    # 6) Coherence Score (k-Optimierung) auf fixer Teilmenge
     sample_coh = 300
-    texts_coh = texts_all.sample(n=sample_coh, random_state=42)
+    texts_coh = texts_all.sample(n=sample_coh, random_state=SEED)
     print("\nBerechne Coherence Scores (Subset)...")
     print("Sample Größe (Coherence):", len(texts_coh))
 
@@ -190,13 +196,13 @@ def main():
     best_k = coherence_values.index(max(coherence_values)) + 2
     print("\nOptimale Anzahl von Topics laut Coherence:", best_k)
 
-    # 7) Finale Modelle mit optimalem k trainieren
+    # 7) Finale Modelle mit optimalem k trainieren (auf Hauptsample)
     print("\nTrainiere finale Modelle mit optimalem k...")
 
-    lda_final = LatentDirichletAllocation(n_components=best_k, random_state=42)
+    lda_final = LatentDirichletAllocation(n_components=best_k, random_state=SEED)
     lda_final.fit(count_matrix)
 
-    nmf_final = NMF(n_components=best_k, random_state=42)
+    nmf_final = NMF(n_components=best_k, random_state=SEED, init="nndsvd")
     nmf_final.fit(tfidf_matrix)
 
     print(f"\n--- LDA Topics (k={best_k}) ---")
