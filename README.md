@@ -13,5 +13,14 @@ mithilfe von NLP-Techniken.
 Der Datensatz ist öffentlich verfügbar auf Kaggle:
 https://www.kaggle.com/datasets/selener/consumer-complaintdatabase
 
+## Datenbasis
+
+Für die Analyse wurde ein Subset von 500 Dokumenten verwendet.
+
+## Optimale Topic-Anzahl
+
+Die optimale Anzahl der Topics wurde mittels Coherence Score bestimmt.
+Ergebnis: k = 3
+
 ## Ausführung
 python analysis.py
