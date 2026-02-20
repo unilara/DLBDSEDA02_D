@@ -24,6 +24,11 @@ def normalize_text(text: str) -> str:
     return text
 
 
+def drop_empty(texts):
+    """Entfernt leere/whitespace-only Texte nach Cleaning."""
+    return [t for t in texts if isinstance(t, str) and t.strip()]
+
+
 def spacy_clean_texts(nlp, texts):
     """
     Textvorverarbeitung mit spaCy:
@@ -36,25 +41,19 @@ def spacy_clean_texts(nlp, texts):
     """
     cleaned = []
 
-    # nlp.pipe ist deutlich schneller als nlp() pro Text
-    for doc in nlp.pipe(texts, batch_size=200):
+    # n_process=1 => stabil auf allen Systemen (keine Multiprocessing-Probleme)
+    for doc in nlp.pipe(texts, batch_size=200, n_process=1):
         tokens = []
         for token in doc:
-            # Stopwörter raus
             if token.is_stop:
                 continue
-
-            # Nur Buchstaben
             if not token.is_alpha:
                 continue
 
             lemma = token.lemma_.lower().strip()
 
-            # Sehr kurze Tokens entfernen
             if len(lemma) <= 2:
                 continue
-
-            # Zusätzlicher Stopword-Check
             if lemma in STOP_WORDS:
                 continue
 
@@ -82,7 +81,6 @@ def compute_coherence_values(dictionary, corpus, texts, start=2, limit=10, passe
     coherence_values = []
 
     for num_topics in range(start, limit):
-        # gensim LDA für Coherence-Bewertung
         model = gensim.models.LdaModel(
             corpus=corpus,
             id2word=dictionary,
@@ -91,7 +89,7 @@ def compute_coherence_values(dictionary, corpus, texts, start=2, limit=10, passe
             passes=passes
         )
 
-        # processes=1 verhindert Multiprocessing-Probleme auf macOS/Python 3.12
+        # processes=1 verhindert Multiprocessing-Probleme auf macOS/Python 3.12+
         coherence_model = CoherenceModel(
             model=model,
             texts=texts,
@@ -105,18 +103,22 @@ def compute_coherence_values(dictionary, corpus, texts, start=2, limit=10, passe
     return coherence_values
 
 # Hauptprogramm
-
 def main():
     print("START")
 
     # 1) Daten laden
     df = pd.read_csv("customercomplaints.csv", low_memory=False)
+    if "Consumer complaint narrative" not in df.columns:
+        raise SystemExit("Spalte 'Consumer complaint narrative' nicht gefunden. Bitte CSV prüfen.")
+
     texts_all = df["Consumer complaint narrative"].dropna().astype(str)
     print("Anzahl Texte gesamt:", len(texts_all))
 
+    if len(texts_all) < 10:
+        raise SystemExit("Zu wenige Texte nach dropna(). Bitte Datensatz prüfen.")
+
     # 2) spaCy-Modell laden (Tokenisierung + Lemmatisierung)
     try:
-        # parser/ner deaktiviert => schneller
         nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
     except OSError:
         raise SystemExit(
@@ -126,23 +128,25 @@ def main():
         )
 
     # 3) Fixes Subset für Hauptanalyse (Reproduzierbarkeit)
-    sample_main = 500
+    sample_main = min(500, len(texts_all))
     texts_main = texts_all.sample(n=sample_main, random_state=SEED)
     print("Sample Größe (Hauptanalyse):", len(texts_main))
 
     # Normalisieren + spaCy-cleaning
     texts_main_norm = [normalize_text(t) for t in texts_main.tolist()]
     cleaned_main = spacy_clean_texts(nlp, texts_main_norm)
+    cleaned_main = drop_empty(cleaned_main)
+
+    if len(cleaned_main) < 10:
+        raise SystemExit("Zu wenige Texte nach Cleaning. Bitte Cleaning-Parameter prüfen.")
 
     print("\nBeispiel nachher (cleaned):")
     print(cleaned_main[0][:250])
 
     # 4) Vektorisierung (2 Techniken)
-    # Bag-of-Words / Count
     count_vectorizer = CountVectorizer(max_df=0.95, min_df=2)
     count_matrix = count_vectorizer.fit_transform(cleaned_main)
 
-    # TF-IDF
     tfidf_vectorizer = TfidfVectorizer(max_df=0.95, min_df=2)
     tfidf_matrix = tfidf_vectorizer.fit_transform(cleaned_main)
 
@@ -153,11 +157,20 @@ def main():
     # 5) Topic Modeling (2 Methoden)
     n_topics_initial = 5
 
-    lda = LatentDirichletAllocation(n_components=n_topics_initial, random_state=SEED)
+    lda = LatentDirichletAllocation(
+        n_components=n_topics_initial,
+        random_state=SEED,
+        learning_method="batch",
+        max_iter=20
+    )
     lda.fit(count_matrix)
 
-    # init="nndsvd" verbessert Stabilität/Interpretierbarkeit (reproduzierbar)
-    nmf = NMF(n_components=n_topics_initial, random_state=SEED, init="nndsvd")
+    nmf = NMF(
+        n_components=n_topics_initial,
+        random_state=SEED,
+        init="nndsvd",
+        max_iter=400
+    )
     nmf.fit(tfidf_matrix)
 
     print(f"\n--- LDA Topics (k={n_topics_initial}) ---")
@@ -167,16 +180,21 @@ def main():
     print_top_words(nmf, tfidf_vectorizer.get_feature_names_out())
 
     # 6) Coherence Score (k-Optimierung) auf fixer Teilmenge
-    sample_coh = 300
+    sample_coh = min(300, len(texts_all))
     texts_coh = texts_all.sample(n=sample_coh, random_state=SEED)
     print("\nBerechne Coherence Scores (Subset)...")
     print("Sample Größe (Coherence):", len(texts_coh))
+    print("Hinweis: Coherence (c_v) wird via gensim-LDA berechnet und dient als Orientierung für k.")
 
     texts_coh_norm = [normalize_text(t) for t in texts_coh.tolist()]
     cleaned_coh = spacy_clean_texts(nlp, texts_coh_norm)
+    cleaned_coh = drop_empty(cleaned_coh)
 
-    # gensim erwartet tokenisierte Texte
     tokenized_coh = [t.split() for t in cleaned_coh]
+    tokenized_coh = [t for t in tokenized_coh if len(t) > 0]
+
+    if len(tokenized_coh) < 10:
+        raise SystemExit("Zu wenige tokenisierte Texte für Coherence. Bitte Cleaning prüfen.")
 
     dictionary = Dictionary(tokenized_coh)
     corpus = [dictionary.doc2bow(t) for t in tokenized_coh]
@@ -186,7 +204,7 @@ def main():
         corpus=corpus,
         texts=tokenized_coh,
         start=2,
-        limit=10,   
+        limit=10,
         passes=5
     )
 
@@ -199,10 +217,20 @@ def main():
     # 7) Finale Modelle mit optimalem k trainieren (auf Hauptsample)
     print("\nTrainiere finale Modelle mit optimalem k...")
 
-    lda_final = LatentDirichletAllocation(n_components=best_k, random_state=SEED)
+    lda_final = LatentDirichletAllocation(
+        n_components=best_k,
+        random_state=SEED,
+        learning_method="batch",
+        max_iter=20
+    )
     lda_final.fit(count_matrix)
 
-    nmf_final = NMF(n_components=best_k, random_state=SEED, init="nndsvd")
+    nmf_final = NMF(
+        n_components=best_k,
+        random_state=SEED,
+        init="nndsvd",
+        max_iter=400
+    )
     nmf_final.fit(tfidf_matrix)
 
     print(f"\n--- LDA Topics (k={best_k}) ---")
