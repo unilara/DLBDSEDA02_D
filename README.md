@@ -27,6 +27,18 @@ Das Projekt ist vollständig reproduzierbar durch:
 - feste Subset-Größe
 - deterministische Initialisierung der Modelle
 
+## Installation
+# Virtuelle Umgebung erstellen (optional, empfohlen)
+python -m venv venv
+source venv/bin/activate   # Mac/Linux
+# oder
+venv\Scripts\activate      # Windows
+
+# Abhängigkeiten installieren
+pip install -r requirements.txt
+
+# spaCy Sprachmodell installieren
+python -m spacy download en_core_web_sm
 
 ## Ausführung
 python analysis.py
