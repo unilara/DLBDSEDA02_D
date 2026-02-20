@@ -28,11 +28,11 @@ Das Projekt ist vollständig reproduzierbar durch:
 - deterministische Initialisierung der Modelle
 
 ## Installation
-# Virtuelle Umgebung erstellen (optional, empfohlen)
+# Virtuelle Umgebung erstellen
 python -m venv venv
-source venv/bin/activate   # Mac/Linux
-# oder
-venv\Scripts\activate      # Windows
+source venv/bin/activate   (für Mac/Linux) 
+oder
+venv\Scripts\activate      (für Windows)
 
 # Abhängigkeiten installieren
 pip install -r requirements.txt
