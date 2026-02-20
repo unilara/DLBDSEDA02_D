@@ -28,16 +28,16 @@ Das Projekt ist vollständig reproduzierbar durch:
 - deterministische Initialisierung der Modelle
 
 ## Installation
-# Virtuelle Umgebung erstellen
+## Virtuelle Umgebung erstellen
 python -m venv venv
 source venv/bin/activate   (für Mac/Linux) 
 oder
 venv\Scripts\activate      (für Windows)
 
-# Abhängigkeiten installieren
+## Abhängigkeiten installieren
 pip install -r requirements.txt
 
-# spaCy Sprachmodell installieren
+## spaCy Sprachmodell installieren
 python -m spacy download en_core_web_sm
 
 ## Ausführung
